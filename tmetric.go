@@ -17,12 +17,7 @@ import (
 
 	"github.com/choveylee/tcfg"
 	"github.com/prometheus/client_golang/prometheus"
-	otelprometheus "go.opentelemetry.io/otel/exporters/metric/prometheus"
-	export "go.opentelemetry.io/otel/sdk/export/metric"
-	"go.opentelemetry.io/otel/sdk/metric/aggregator/histogram"
-	controller "go.opentelemetry.io/otel/sdk/metric/controller/basic"
-	processor "go.opentelemetry.io/otel/sdk/metric/processor/basic"
-	selector "go.opentelemetry.io/otel/sdk/metric/selector/simple"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const MaxLabels = 10
@@ -137,31 +132,6 @@ func SinceMS(t time.Time) float64 {
 	return float64(time.Now().Sub(t).Milliseconds())
 }
 
-func withMetricHandler() (http.Handler, error) {
-	registry, _ := prometheus.DefaultRegisterer.(*prometheus.Registry)
-	config := otelprometheus.Config{}
-
-	controller := controller.New(
-		processor.New(
-			selector.NewWithHistogramDistribution(
-				histogram.WithExplicitBoundaries(config.DefaultHistogramBoundaries),
-			),
-			export.CumulativeExportKindSelector(),
-			processor.WithMemory(true),
-		),
-	)
-
-	exporter, err := otelprometheus.New(
-		otelprometheus.Config{Registry: registry},
-		controller,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("install prometheus pipeline: %v", err)
-	}
-
-	return exporter, nil
-}
-
 func init() {
 	metricEnable := tcfg.DefaultBool(tcfg.LocalKey("METRIC_ENABLE"), false)
 	if metricEnable == false {
@@ -186,14 +156,6 @@ func InitMetric(metricPath string, metricPort int, pprofEnable bool) error {
 }
 
 func startMetric(metricPath string, metricPort int, pprofEnable bool) error {
-	handler, err := withMetricHandler()
-	if err != nil {
-		log.Printf("start metric (%s, %d, %v) err (with metric handler %v).",
-			metricPath, metricPort, pprofEnable, err)
-
-		return err
-	}
-
 	var metricMux *http.ServeMux
 
 	if pprofEnable == true {
@@ -202,7 +164,7 @@ func startMetric(metricPath string, metricPort int, pprofEnable bool) error {
 		metricMux = http.NewServeMux()
 	}
 
-	metricMux.Handle(metricPath, handler)
+	metricMux.Handle(metricPath, promhttp.Handler())
 
 	go func() {
 		log.Printf("start metric exporter at %d:%s", metricPort, metricPath)
