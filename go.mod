@@ -3,7 +3,7 @@ module github.com/choveylee/tmetric
 go 1.19
 
 require (
-	github.com/choveylee/tcfg v0.0.0-20230729073348-4dd6ded5b838
+	github.com/choveylee/tcfg v0.0.0-20231115020527-b8bdc45c86eb
 	github.com/prometheus/client_golang v1.17.0
 )
 
@@ -17,6 +17,6 @@ require (
 	github.com/prometheus/common v0.45.0 // indirect
 	github.com/prometheus/procfs v0.12.0 // indirect
 	github.com/stretchr/testify v1.8.4 // indirect
-	golang.org/x/sys v0.14.0 // indirect
+	golang.org/x/sys v0.15.0 // indirect
 	google.golang.org/protobuf v1.31.0 // indirect
 )
