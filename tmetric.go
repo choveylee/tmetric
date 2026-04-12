@@ -61,11 +61,6 @@ func checkLabelCount(got, want int) error {
 	return fmt.Errorf("tmetric: label value count is %d, want %d", got, want)
 }
 
-// errLabelNamesTooMany returns an error indicating that got exceeds MaxLabels.
-func errLabelNamesTooMany(got int) error {
-	return fmt.Errorf("tmetric: label names count %d exceeds maximum %d", got, MaxLabels)
-}
-
 // registerPprofHandlers registers the standard pprof endpoints under /debug/pprof/ on mux.
 // The metrics listener serves only mux; it does not use http.DefaultServeMux.
 //
@@ -122,7 +117,7 @@ func (p *CounterVec) Add(v float64, lvs ...string) error {
 // The length of labels must not exceed MaxLabels.
 func NewCounterVec(name, help string, labels []string) (*CounterVec, error) {
 	if len(labels) > MaxLabels {
-		return nil, errLabelNamesTooMany(len(labels))
+		return nil, fmt.Errorf("tmetric: label names count %d exceeds maximum %d", len(labels), MaxLabels)
 	}
 
 	counterVec := prometheus.NewCounterVec(
@@ -178,7 +173,7 @@ func (p *GaugeVec) Add(v float64, lvs ...string) error {
 // The length of labels must not exceed MaxLabels.
 func NewGaugeVec(name, help string, labels []string) (*GaugeVec, error) {
 	if len(labels) > MaxLabels {
-		return nil, errLabelNamesTooMany(len(labels))
+		return nil, fmt.Errorf("tmetric: label names count %d exceeds maximum %d", len(labels), MaxLabels)
 	}
 
 	gaugeVec := prometheus.NewGaugeVec(
@@ -223,7 +218,7 @@ func (p *HistogramVec) Observe(v float64, lvs ...string) error {
 // The length of labels must not exceed MaxLabels.
 func NewHistogramVec(name, help string, labels []string) (*HistogramVec, error) {
 	if len(labels) > MaxLabels {
-		return nil, errLabelNamesTooMany(len(labels))
+		return nil, fmt.Errorf("tmetric: label names count %d exceeds maximum %d", len(labels), MaxLabels)
 	}
 
 	histogramVec := prometheus.NewHistogramVec(
