@@ -1,21 +1,3 @@
-/**
- * @Author: lidonglin
- * @Description: Prometheus CounterVec, GaugeVec, and HistogramVec wrappers with label-arity checks, optional HTTP scrape endpoint, Shutdown, and optional pprof routes.
- * @File:  tmetric.go
- * @Version: 1.0.0
- * @Date: 2022/11/03 10:34
- */
-
-// Package tmetric provides wrappers around Prometheus CounterVec, GaugeVec, and HistogramVec
-// metrics with validation of label value arity before calling WithLabelValues. Metrics are
-// registered with the default Prometheus gatherer. Callers may expose a scrape endpoint with
-// InitMetric, or rely on package initialization when tcfg enables it (see METRIC_ENABLE,
-// METRIC_PATH, METRIC_PORT, and PPROF_ENABLE).
-//
-// When the HTTP server is started with pprof enabled, pprof routes are mounted on the same
-// http.ServeMux as the Prometheus handler for that server only. Importing net/http/pprof
-// still runs its package init, which registers handlers on http.DefaultServeMux; that is
-// standard library behavior outside this package's control.
 package tmetric
 
 import (
@@ -34,12 +16,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// MaxLabels is the maximum number of label names allowed for NewCounterVec, NewGaugeVec,
-// and NewHistogramVec.
+// MaxLabels is the inclusive upper bound on the number of label names permitted when
+// constructing vectors with [NewCounterVec], [NewGaugeVec], or [NewHistogramVec].
 const MaxLabels = 10
 
 var (
-	mutex  sync.Mutex    // serializes access to server
+	mutex  sync.Mutex    // protects server
 	server *http.Server // non-nil while the metrics HTTP server is running
 )
 
@@ -52,7 +34,8 @@ func registerCollector(c prometheus.Collector) error {
 	return nil
 }
 
-// checkLabelCount returns an error if got differs from want, the expected number of label values.
+// checkLabelCount returns nil when got equals want. Otherwise it returns an error
+// reporting that the number of label values (got) does not match the expected count (want).
 func checkLabelCount(got, want int) error {
 	if got == want {
 		return nil
@@ -61,11 +44,12 @@ func checkLabelCount(got, want int) error {
 	return fmt.Errorf("tmetric: label value count is %d, want %d", got, want)
 }
 
-// registerPprofHandlers registers the standard pprof endpoints under /debug/pprof/ on mux.
-// The metrics listener serves only mux; it does not use http.DefaultServeMux.
+// registerPprofHandlers registers the standard [net/http/pprof] endpoints on mux beneath
+// /debug/pprof/. The metrics HTTP server uses only mux; it does not serve
+// [http.DefaultServeMux].
 //
-// Importing package net/http/pprof still registers the same paths on http.DefaultServeMux
-// during package initialization.
+// Note that importing [net/http/pprof] also attaches handlers to [http.DefaultServeMux]
+// during that package's initialization.
 func registerPprofHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
 	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
@@ -74,17 +58,17 @@ func registerPprofHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 }
 
-// CounterVec wraps prometheus.CounterVec and enforces that each method receives exactly one
-// string per label name declared at construction.
+// CounterVec wraps [prometheus.CounterVec]. Each method requires exactly one string
+// argument per label name supplied to [NewCounterVec].
 type CounterVec struct {
 	counterVec *prometheus.CounterVec
 
 	labelCount int
 }
 
-// Inc increments the counter by one for the label values given in lvs.
+// Inc increments the counter by one for the label combination lvs.
 //
-// Inc returns an error if the number of values in lvs does not equal the label count from NewCounterVec.
+// It returns an error if len(lvs) does not equal the label arity fixed at construction.
 func (p *CounterVec) Inc(lvs ...string) error {
 	if err := checkLabelCount(len(lvs), p.labelCount); err != nil {
 		return err
@@ -95,9 +79,10 @@ func (p *CounterVec) Inc(lvs ...string) error {
 	return nil
 }
 
-// Add adds v to the counter for the label values in lvs. v must be greater than or equal to zero.
+// Add adds v to the counter for the label combination lvs. The value v must be
+// non-negative.
 //
-// Add returns an error if the label value count is incorrect or if v is negative.
+// It returns an error if the number of label values is incorrect or if v is negative.
 func (p *CounterVec) Add(v float64, lvs ...string) error {
 	if err := checkLabelCount(len(lvs), p.labelCount); err != nil {
 		return err
@@ -112,9 +97,9 @@ func (p *CounterVec) Add(v float64, lvs ...string) error {
 	return nil
 }
 
-// NewCounterVec creates a counter vector with the given Prometheus name, help text, and
-// label names, registers it with the default registry, and returns a CounterVec wrapper.
-// The length of labels must not exceed MaxLabels.
+// NewCounterVec builds a [prometheus.CounterVec] with the given metric name, help text,
+// and label names, registers it with the default registry, and returns a [CounterVec].
+// The slice labels must contain at most [MaxLabels] elements.
 func NewCounterVec(name, help string, labels []string) (*CounterVec, error) {
 	if len(labels) > MaxLabels {
 		return nil, fmt.Errorf("tmetric: label names count %d exceeds maximum %d", len(labels), MaxLabels)
@@ -136,15 +121,15 @@ func NewCounterVec(name, help string, labels []string) (*CounterVec, error) {
 	return &CounterVec{counterVec: counterVec, labelCount: len(labels)}, nil
 }
 
-// GaugeVec wraps prometheus.GaugeVec and enforces label value arity like CounterVec.
+// GaugeVec wraps [prometheus.GaugeVec] and enforces the same label arity rules as [CounterVec].
 type GaugeVec struct {
 	gaugeVec   *prometheus.GaugeVec
 	labelCount int
 }
 
-// Set sets the gauge to v for the label values in lvs.
+// Set sets the gauge to v for the label combination lvs.
 //
-// Set returns an error if the number of values in lvs does not equal the label count from NewGaugeVec.
+// It returns an error if len(lvs) does not equal the label arity fixed at construction.
 func (p *GaugeVec) Set(v float64, lvs ...string) error {
 	if err := checkLabelCount(len(lvs), p.labelCount); err != nil {
 		return err
@@ -155,9 +140,9 @@ func (p *GaugeVec) Set(v float64, lvs ...string) error {
 	return nil
 }
 
-// Add adds v to the gauge for the label values in lvs.
+// Add adds v to the gauge for the label combination lvs.
 //
-// Add returns an error if the number of values in lvs does not equal the label count from NewGaugeVec.
+// It returns an error if len(lvs) does not equal the label arity fixed at construction.
 func (p *GaugeVec) Add(v float64, lvs ...string) error {
 	if err := checkLabelCount(len(lvs), p.labelCount); err != nil {
 		return err
@@ -168,9 +153,9 @@ func (p *GaugeVec) Add(v float64, lvs ...string) error {
 	return nil
 }
 
-// NewGaugeVec creates a gauge vector with the given name, help text, and label names,
-// registers it with the default registry, and returns a GaugeVec wrapper.
-// The length of labels must not exceed MaxLabels.
+// NewGaugeVec builds a [prometheus.GaugeVec] with the given metric name, help text, and
+// label names, registers it with the default registry, and returns a [GaugeVec].
+// The slice labels must contain at most [MaxLabels] elements.
 func NewGaugeVec(name, help string, labels []string) (*GaugeVec, error) {
 	if len(labels) > MaxLabels {
 		return nil, fmt.Errorf("tmetric: label names count %d exceeds maximum %d", len(labels), MaxLabels)
@@ -192,17 +177,18 @@ func NewGaugeVec(name, help string, labels []string) (*GaugeVec, error) {
 	return &GaugeVec{gaugeVec: gaugeVec, labelCount: len(labels)}, nil
 }
 
-// HistogramVec wraps prometheus.HistogramVec with default millisecond bucket boundaries
-// and enforces label value arity.
+// HistogramVec wraps [prometheus.HistogramVec] with the package default millisecond
+// bucket upper bounds for latency-style observations and enforces label arity on each method.
 type HistogramVec struct {
 	histogramVec *prometheus.HistogramVec
 	labelCount   int
 }
 
-// Observe records v in the histogram for the label values in lvs.
-// Bucket boundaries are defined by defaultLatencyBuckets (milliseconds); metric help text should state the unit of v.
+// Observe records v in the histogram for the label combination lvs. Buckets use
+// millisecond upper bounds; the help string passed to [NewHistogramVec] should document
+// the unit of v.
 //
-// Observe returns an error if the number of values in lvs does not equal the label count from NewHistogramVec.
+// It returns an error if len(lvs) does not equal the label arity fixed at construction.
 func (p *HistogramVec) Observe(v float64, lvs ...string) error {
 	if err := checkLabelCount(len(lvs), p.labelCount); err != nil {
 		return err
@@ -213,9 +199,9 @@ func (p *HistogramVec) Observe(v float64, lvs ...string) error {
 	return nil
 }
 
-// NewHistogramVec creates a histogram vector with defaultLatencyBuckets, registers it with
-// the default registry, and returns a HistogramVec wrapper.
-// The length of labels must not exceed MaxLabels.
+// NewHistogramVec builds a [prometheus.HistogramVec] with the package default millisecond
+// buckets, registers it with the default registry, and returns a [HistogramVec].
+// The slice labels must contain at most [MaxLabels] elements.
 func NewHistogramVec(name, help string, labels []string) (*HistogramVec, error) {
 	if len(labels) > MaxLabels {
 		return nil, fmt.Errorf("tmetric: label names count %d exceeds maximum %d", len(labels), MaxLabels)
@@ -238,12 +224,15 @@ func NewHistogramVec(name, help string, labels []string) (*HistogramVec, error) 
 	return &HistogramVec{histogramVec: histogramVec, labelCount: len(labels)}, nil
 }
 
-// SinceMS returns the duration from t until now in milliseconds as a float64 value, suitable
-// for passing to [HistogramVec.Observe] when bucket upper bounds are in milliseconds.
+// SinceMS returns the elapsed time since t in milliseconds as a float64. The result is
+// appropriate for [HistogramVec.Observe] when histogram bucket boundaries are expressed
+// in milliseconds.
 func SinceMS(t time.Time) float64 {
 	return float64(time.Since(t).Milliseconds())
 }
 
+// init starts the metrics HTTP server when the tcfg key METRIC_ENABLE is true, using
+// METRIC_PATH, METRIC_PORT, and PPROF_ENABLE. Startup failures are logged and not returned.
 func init() {
 	metricEnable := tcfg.DefaultBool(tcfg.LocalKey("METRIC_ENABLE"), false)
 	if !metricEnable {
@@ -260,20 +249,21 @@ func init() {
 	}
 }
 
-// InitMetric starts an HTTP server listening on all interfaces at metricPort and serves
-// Prometheus metrics at metricPath. If pprofEnable is true, standard pprof endpoints are
-// also registered on that server's http.ServeMux under /debug/pprof/.
+// InitMetric listens on all interfaces on metricPort and serves Prometheus metrics at
+// metricPath. When pprofEnable is true, it also registers standard [net/http/pprof]
+// endpoints on that server's [http.ServeMux] under /debug/pprof/.
 //
 // metricPath must be non-empty and must begin with '/', for example "/metrics" or "/metric".
 //
-// Only one metrics HTTP server may run per process; a second call returns an error while the first remains active.
+// At most one metrics HTTP server may run per process; a second call returns an error while
+// the first server remains running.
 func InitMetric(metricPath string, metricPort int, pprofEnable bool) error {
 	return startMetric(metricPath, metricPort, pprofEnable)
 }
 
-// Shutdown shuts down the metrics HTTP server started by InitMetric or by package init when
-// METRIC_ENABLE is set. It returns when the server has stopped or ctx is canceled.
-// Shutdown returns nil if no server is running.
+// Shutdown gracefully stops the metrics HTTP server started by [InitMetric] or during
+// package initialization when METRIC_ENABLE is set. It blocks until the server exits or
+// ctx is canceled. If no server is running, Shutdown returns nil.
 func Shutdown(ctx context.Context) error {
 	mutex.Lock()
 
@@ -291,8 +281,9 @@ func Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// startMetric listens on metricPort, attaches promhttp.Handler at metricPath, optionally
-// registers pprof handlers, and stores the resulting http.Server in the package variable server.
+// startMetric binds to metricPort, serves [promhttp.Handler] at metricPath, optionally
+// registers pprof routes, and stores the resulting [*http.Server] in the package-level
+// server variable.
 func startMetric(metricPath string, metricPort int, pprofEnable bool) error {
 	if metricPath == "" {
 		return fmt.Errorf("tmetric: metricPath must be non-empty")
