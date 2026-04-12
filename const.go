@@ -1,13 +1,15 @@
 /**
  * @Author: lidonglin
- * @Description:
+ * @Description: Default Prometheus histogram upper bounds (milliseconds) for NewHistogramVec.
  * @File:  const.go
  * @Version: 1.0.0
- * @Date: 2022/11/06 19:35
+ * @Date: 2022/11/03 10:34
  */
 
 package tmetric
 
+// defaultLatencyBuckets holds the default upper bounds, in milliseconds, for histograms
+// created by NewHistogramVec.
 var defaultLatencyBuckets = []float64{
 	1.0, 2.0, 3.0, 4.0, 5.0,
 	6.0, 8.0, 10.0, 13.0, 16.0,

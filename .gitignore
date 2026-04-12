@@ -2,3 +2,5 @@
 .idea/modules.xml
 .idea/tmetrics.iml
 .idea/vcs.xml
+.idea/go.imports.xml
+.idea/MarsCodeWorkspaceAppSettings.xml
