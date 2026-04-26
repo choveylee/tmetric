@@ -7,11 +7,11 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/http/pprof"
 	"sync"
 	"time"
 
 	"github.com/choveylee/tcfg"
+	"github.com/choveylee/tmetric/registry"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -20,8 +20,10 @@ import (
 // constructing vectors with [NewCounterVec], [NewGaugeVec], or [NewHistogramVec].
 const MaxLabels = 10
 
+const optionalPprofImportPath = "github.com/choveylee/tmetric/registry/pprof"
+
 var (
-	mutex  sync.Mutex    // protects server
+	mutex  sync.Mutex   // protects server
 	server *http.Server // non-nil while the metrics HTTP server is running
 )
 
@@ -41,21 +43,17 @@ func checkLabelCount(got, want int) error {
 		return nil
 	}
 
-	return fmt.Errorf("tmetric: label value count is %d, want %d", got, want)
+	return fmt.Errorf("tmetric: received %d label values; want %d", got, want)
 }
 
-// registerPprofHandlers registers the standard [net/http/pprof] endpoints on mux beneath
-// /debug/pprof/. The metrics HTTP server uses only mux; it does not serve
-// [http.DefaultServeMux].
-//
-// Note that importing [net/http/pprof] also attaches handlers to [http.DefaultServeMux]
-// during that package's initialization.
-func registerPprofHandlers(mux *http.ServeMux) {
-	mux.HandleFunc("/debug/pprof/", pprof.Index)
-	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+func registerPprofHandlers(mux *http.ServeMux) error {
+	pprofRegistrar := registry.PprofRegistrar()
+
+	if pprofRegistrar == nil {
+		return fmt.Errorf("tmetric: pprof support is unavailable; import _ %q to enable it", optionalPprofImportPath)
+	}
+
+	return pprofRegistrar(mux)
 }
 
 // CounterVec wraps [prometheus.CounterVec]. Each method requires exactly one string
@@ -89,7 +87,7 @@ func (p *CounterVec) Add(v float64, lvs ...string) error {
 	}
 
 	if v < 0 {
-		return fmt.Errorf("tmetric: counter Add requires non-negative value (got %g)", v)
+		return fmt.Errorf("tmetric: counter value must be non-negative; got %g", v)
 	}
 
 	p.counterVec.WithLabelValues(lvs...).Add(v)
@@ -102,7 +100,7 @@ func (p *CounterVec) Add(v float64, lvs ...string) error {
 // The slice labels must contain at most [MaxLabels] elements.
 func NewCounterVec(name, help string, labels []string) (*CounterVec, error) {
 	if len(labels) > MaxLabels {
-		return nil, fmt.Errorf("tmetric: label names count %d exceeds maximum %d", len(labels), MaxLabels)
+		return nil, fmt.Errorf("tmetric: received %d label names; maximum supported is %d", len(labels), MaxLabels)
 	}
 
 	counterVec := prometheus.NewCounterVec(
@@ -158,7 +156,7 @@ func (p *GaugeVec) Add(v float64, lvs ...string) error {
 // The slice labels must contain at most [MaxLabels] elements.
 func NewGaugeVec(name, help string, labels []string) (*GaugeVec, error) {
 	if len(labels) > MaxLabels {
-		return nil, fmt.Errorf("tmetric: label names count %d exceeds maximum %d", len(labels), MaxLabels)
+		return nil, fmt.Errorf("tmetric: received %d label names; maximum supported is %d", len(labels), MaxLabels)
 	}
 
 	gaugeVec := prometheus.NewGaugeVec(
@@ -204,7 +202,7 @@ func (p *HistogramVec) Observe(v float64, lvs ...string) error {
 // The slice labels must contain at most [MaxLabels] elements.
 func NewHistogramVec(name, help string, labels []string) (*HistogramVec, error) {
 	if len(labels) > MaxLabels {
-		return nil, fmt.Errorf("tmetric: label names count %d exceeds maximum %d", len(labels), MaxLabels)
+		return nil, fmt.Errorf("tmetric: received %d label names; maximum supported is %d", len(labels), MaxLabels)
 	}
 
 	histogramVec := prometheus.NewHistogramVec(
@@ -228,11 +226,12 @@ func NewHistogramVec(name, help string, labels []string) (*HistogramVec, error) 
 // appropriate for [HistogramVec.Observe] when histogram bucket boundaries are expressed
 // in milliseconds.
 func SinceMS(t time.Time) float64 {
-	return float64(time.Since(t).Milliseconds())
+	return float64(time.Since(t)) / float64(time.Millisecond)
 }
 
-// init starts the metrics HTTP server when the tcfg key METRIC_ENABLE is true, using
-// METRIC_PATH, METRIC_PORT, and PPROF_ENABLE. Startup failures are logged and not returned.
+// init starts the metrics HTTP server when METRIC_ENABLE is true in tcfg, using
+// METRIC_PATH, METRIC_PORT, and PPROF_ENABLE. Startup failures are logged and are
+// not returned to the caller because package initialization cannot return errors.
 func init() {
 	metricEnable := tcfg.DefaultBool(tcfg.LocalKey("METRIC_ENABLE"), false)
 	if !metricEnable {
@@ -244,19 +243,34 @@ func init() {
 
 	pprofEnable := tcfg.DefaultBool(tcfg.LocalKey("PPROF_ENABLE"), false)
 
+	if pprofEnable && registry.PprofRegistrar() == nil {
+		log.Printf("tmetric: deferring metrics startup until %q is imported", optionalPprofImportPath)
+
+		registry.WhenPprofAvailable(func() {
+			err := startMetric(metricPath, metricPort, pprofEnable)
+			if err != nil {
+				log.Printf("tmetric: unable to start the metrics HTTP server: %v", err)
+			}
+		})
+
+		return
+	}
+
 	if err := startMetric(metricPath, metricPort, pprofEnable); err != nil {
-		log.Printf("start metric err: %v", err)
+		log.Printf("tmetric: unable to start the metrics HTTP server: %v", err)
 	}
 }
 
 // InitMetric listens on all interfaces on metricPort and serves Prometheus metrics at
-// metricPath. When pprofEnable is true, it also registers standard [net/http/pprof]
-// endpoints on that server's [http.ServeMux] under /debug/pprof/.
+// metricPath. When pprofEnable is true, it also registers standard-library
+// [net/http/pprof] endpoints on that server's [http.ServeMux] under /debug/pprof/,
+// provided the optional package at github.com/choveylee/tmetric/registry/pprof has been imported.
 //
-// metricPath must be non-empty and must begin with '/', for example "/metrics" or "/metric".
+// metricPath must be non-empty and must begin with '/', for example "/metrics" or
+// "/metric".
 //
-// At most one metrics HTTP server may run per process; a second call returns an error while
-// the first server remains running.
+// At most one metrics HTTP server may run per process. A second call returns an
+// error while the first server remains running.
 func InitMetric(metricPath string, metricPort int, pprofEnable bool) error {
 	return startMetric(metricPath, metricPort, pprofEnable)
 }
@@ -276,7 +290,7 @@ func Shutdown(ctx context.Context) error {
 	}
 
 	if err := tmpServer.Shutdown(ctx); err != nil {
-		return fmt.Errorf("tmetric: metrics HTTP server shutdown: %w", err)
+		return fmt.Errorf("tmetric: shutting down the metrics HTTP server: %w", err)
 	}
 	return nil
 }
@@ -286,16 +300,21 @@ func Shutdown(ctx context.Context) error {
 // server variable.
 func startMetric(metricPath string, metricPort int, pprofEnable bool) error {
 	if metricPath == "" {
-		return fmt.Errorf("tmetric: metricPath must be non-empty")
+		return fmt.Errorf("tmetric: metric path must not be empty")
 	}
 	if metricPath[0] != '/' {
-		return fmt.Errorf("tmetric: metricPath must start with '/'")
+		return fmt.Errorf("tmetric: metric path must begin with '/'")
 	}
 
 	metricMux := http.NewServeMux()
+
 	metricMux.Handle(metricPath, promhttp.Handler())
+
 	if pprofEnable {
-		registerPprofHandlers(metricMux)
+		err := registerPprofHandlers(metricMux)
+		if err != nil {
+			return err
+		}
 	}
 
 	mutex.Lock()
@@ -303,7 +322,7 @@ func startMetric(metricPath string, metricPort int, pprofEnable bool) error {
 	if server != nil {
 		mutex.Unlock()
 
-		return fmt.Errorf("tmetric: metrics HTTP server already running")
+		return fmt.Errorf("tmetric: the metrics HTTP server is already running")
 	}
 
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", metricPort))
@@ -322,11 +341,11 @@ func startMetric(metricPath string, metricPort int, pprofEnable bool) error {
 	mutex.Unlock()
 
 	go func() {
-		log.Printf("start metric exporter at %s (path %s, pprof %v)", listener.Addr().String(), metricPath, pprofEnable)
+		log.Printf("tmetric: serving metrics on %s (path %s, pprof %t)", listener.Addr().String(), metricPath, pprofEnable)
 
 		err := tmpServer.Serve(listener)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Printf("metric http.Server.Serve (%s, %d, pprof %v): %v", metricPath, metricPort, pprofEnable, err)
+			log.Printf("tmetric: metrics HTTP server error (path %s, port %d, pprof %t): %v", metricPath, metricPort, pprofEnable, err)
 		}
 
 		mutex.Lock()

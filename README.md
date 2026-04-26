@@ -1,10 +1,12 @@
 # tmetric
 
-Thin wrappers around [Prometheus](https://prometheus.io/) `CounterVec`, `GaugeVec`, and `HistogramVec` with runtime checks on label value arity, plus an optional HTTP scrape endpoint.
+`tmetric` provides thin wrappers around Prometheus `CounterVec`, `GaugeVec`, and
+`HistogramVec`. The package validates label-value arity before delegating to
+Prometheus APIs and can expose metrics through an HTTP endpoint.
 
 ## Requirements
 
-- Go **1.25** or later (see [`go.mod`](go.mod))
+- Go **1.25** or later
 
 ## Installation
 
@@ -12,55 +14,94 @@ Thin wrappers around [Prometheus](https://prometheus.io/) `CounterVec`, `GaugeVe
 go get github.com/choveylee/tmetric
 ```
 
-## Overview
+## Features
 
-- **Constructors** — `NewCounterVec`, `NewGaugeVec`, and `NewHistogramVec` register metrics with the default Prometheus registry. Each accepts at most **`MaxLabels` (10)** label names.
-- **Label arity** — Methods such as `Inc`, `Add`, `Set`, and `Observe` return an error if the number of label values does not match the constructor, avoiding panics from `WithLabelValues`.
-- **HTTP endpoint** — `InitMetric` listens on `:{port}` on all interfaces and serves `promhttp.Handler` at `metricPath` (must be non-empty and start with `/`, e.g. `/metrics`). At most **one** such server may run per process; use **`Shutdown`** for graceful termination.
-- **Optional startup via tcfg** — When `METRIC_ENABLE` is true ([tcfg](https://github.com/choveylee/tcfg)), package `init` starts the server using `METRIC_PATH`, `METRIC_PORT`, and `PPROF_ENABLE`.
+- Registers counters, gauges, and histograms with the default Prometheus registry.
+- Returns errors for mismatched label-value counts instead of allowing
+  `WithLabelValues` to panic.
+- Exposes metrics through an optional HTTP server created by `InitMetric`.
+- Supports configuration-driven startup through
+  [`tcfg`](https://github.com/choveylee/tcfg).
+- Supports optional integration with the standard-library `net/http/pprof`
+  handlers.
 
-## Configuration (tcfg keys)
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `METRIC_ENABLE` | `false` | If true, `init` starts the metrics HTTP server |
-| `METRIC_PATH` | `/metric` | URL path for Prometheus scraping |
-| `METRIC_PORT` | `18089` | TCP port (`:{port}` on all interfaces) |
-| `PPROF_ENABLE` | `false` | If true, registers `net/http/pprof` handlers on the **same** `http.ServeMux` as the metrics handler, under `/debug/pprof/` |
-
-Importing `net/http/pprof` still runs its package `init`, which registers handlers on `http.DefaultServeMux`; that behavior is defined by the Go standard library.
-
-## Example
+## Quick Start
 
 ```go
+package main
+
 import (
 	"context"
 
 	"github.com/choveylee/tmetric"
 )
 
-func Example() error {
+func main() {
 	if err := tmetric.InitMetric("/metrics", 9090, false); err != nil {
-		return err
+		panic(err)
 	}
 	defer func() { _ = tmetric.Shutdown(context.Background()) }()
 
-	cv, err := tmetric.NewCounterVec("http_requests_total", "Total HTTP requests", []string{"method"})
+	requestsTotal, err := tmetric.NewCounterVec(
+		"http_requests_total",
+		"Total number of HTTP requests.",
+		[]string{"method"},
+	)
 	if err != nil {
-		return err
+		panic(err)
 	}
-	return cv.Inc("GET")
+
+	_ = requestsTotal.Inc("GET")
 }
 ```
 
+## Configuration
+
+When `METRIC_ENABLE` is true, package initialization attempts to start the
+metrics HTTP server automatically by reading the following `tcfg` keys:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `METRIC_ENABLE` | `false` | Enables automatic startup of the metrics HTTP server. |
+| `METRIC_PATH` | `/metric` | HTTP path used to serve Prometheus metrics. |
+| `METRIC_PORT` | `18089` | TCP port used by the metrics HTTP server. |
+| `PPROF_ENABLE` | `false` | Enables pprof integration on the same HTTP mux as the metrics handler. |
+
+## Optional pprof Integration
+
+By default, importing `tmetric` does not register profiling handlers on
+`http.DefaultServeMux`.
+
+To enable standard-library pprof support, import the optional package alongside
+`tmetric`:
+
+```go
+import (
+	"github.com/choveylee/tmetric"
+	_ "github.com/choveylee/tmetric/registry/pprof"
+)
+```
+
+Importing `github.com/choveylee/tmetric/registry/pprof` also imports
+`net/http/pprof`. As defined by the Go standard library, that package registers
+its handlers on `http.DefaultServeMux`.
+
+If `InitMetric` is called with `pprofEnable=true` before the optional package is
+imported, `InitMetric` returns an error. During configuration-driven startup,
+package initialization defers metrics server startup until pprof support becomes
+available. If the optional package is never imported, the server is not started
+automatically.
+
 ## Histograms
 
-`NewHistogramVec` uses millisecond-scale buckets (`defaultLatencyBuckets` in the source). Document the unit of observed values in metric names or help text; `SinceMS` reports elapsed time in milliseconds as a `float64` for use with `Observe`.
+`NewHistogramVec` uses millisecond-scale buckets (see
+`defaultLatencyBuckets` in the source). `SinceMS` reports elapsed time in
+fractional milliseconds as a `float64`, which is suitable for
+`HistogramVec.Observe`.
 
-## Tests
+## Testing
 
 ```bash
 go test ./...
+go vet ./...
 ```
-
-If `METRIC_ENABLE` is true when the package loads, `init` starts the HTTP server and tests that assume no server may need adjustment.
