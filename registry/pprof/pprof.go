@@ -1,5 +1,6 @@
 // Package pprof registers the standard-library [net/http/pprof] handlers with
-// tmetric's registry package. Import it for its side effects.
+// tmetric's registry package. Import it for its side effects when pprof support
+// is required on the metrics HTTP server.
 package pprof
 
 import (

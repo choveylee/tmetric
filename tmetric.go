@@ -30,7 +30,7 @@ var (
 // registerCollector registers c with the default Prometheus registry.
 func registerCollector(c prometheus.Collector) error {
 	if err := prometheus.Register(c); err != nil {
-		return fmt.Errorf("tmetric: register collector: %w", err)
+		return fmt.Errorf("tmetric: failed to register Prometheus collector: %w", err)
 	}
 
 	return nil
@@ -43,7 +43,7 @@ func checkLabelCount(got, want int) error {
 		return nil
 	}
 
-	return fmt.Errorf("tmetric: received %d label values; want %d", got, want)
+	return fmt.Errorf("tmetric: label value count mismatch: got %d, want %d", got, want)
 }
 
 func registerPprofHandlers(mux *http.ServeMux) error {
@@ -100,7 +100,7 @@ func (p *CounterVec) Add(v float64, lvs ...string) error {
 // The slice labels must contain at most [MaxLabels] elements.
 func NewCounterVec(name, help string, labels []string) (*CounterVec, error) {
 	if len(labels) > MaxLabels {
-		return nil, fmt.Errorf("tmetric: received %d label names; maximum supported is %d", len(labels), MaxLabels)
+		return nil, fmt.Errorf("tmetric: too many label names: got %d, maximum supported is %d", len(labels), MaxLabels)
 	}
 
 	counterVec := prometheus.NewCounterVec(
@@ -156,7 +156,7 @@ func (p *GaugeVec) Add(v float64, lvs ...string) error {
 // The slice labels must contain at most [MaxLabels] elements.
 func NewGaugeVec(name, help string, labels []string) (*GaugeVec, error) {
 	if len(labels) > MaxLabels {
-		return nil, fmt.Errorf("tmetric: received %d label names; maximum supported is %d", len(labels), MaxLabels)
+		return nil, fmt.Errorf("tmetric: too many label names: got %d, maximum supported is %d", len(labels), MaxLabels)
 	}
 
 	gaugeVec := prometheus.NewGaugeVec(
@@ -202,7 +202,7 @@ func (p *HistogramVec) Observe(v float64, lvs ...string) error {
 // The slice labels must contain at most [MaxLabels] elements.
 func NewHistogramVec(name, help string, labels []string) (*HistogramVec, error) {
 	if len(labels) > MaxLabels {
-		return nil, fmt.Errorf("tmetric: received %d label names; maximum supported is %d", len(labels), MaxLabels)
+		return nil, fmt.Errorf("tmetric: too many label names: got %d, maximum supported is %d", len(labels), MaxLabels)
 	}
 
 	histogramVec := prometheus.NewHistogramVec(
@@ -230,8 +230,8 @@ func SinceMS(t time.Time) float64 {
 }
 
 // init starts the metrics HTTP server when METRIC_ENABLE is true in tcfg, using
-// METRIC_PATH, METRIC_PORT, and PPROF_ENABLE. Startup failures are logged and are
-// not returned to the caller because package initialization cannot return errors.
+// METRIC_PATH, METRIC_PORT, and PPROF_ENABLE. Startup failures are logged because
+// package initialization cannot return errors to the caller.
 func init() {
 	metricEnable := tcfg.DefaultBool(tcfg.LocalKey("METRIC_ENABLE"), false)
 	if !metricEnable {
@@ -244,12 +244,12 @@ func init() {
 	pprofEnable := tcfg.DefaultBool(tcfg.LocalKey("PPROF_ENABLE"), false)
 
 	if pprofEnable && registry.PprofRegistrar() == nil {
-		log.Printf("tmetric: deferring metrics startup until %q is imported", optionalPprofImportPath)
+		log.Printf("tmetric: metrics server startup is deferred until %q is imported", optionalPprofImportPath)
 
 		registry.WhenPprofAvailable(func() {
 			err := startMetric(metricPath, metricPort, pprofEnable)
 			if err != nil {
-				log.Printf("tmetric: unable to start the metrics HTTP server: %v", err)
+				log.Printf("tmetric: failed to start metrics HTTP server: %v", err)
 			}
 		})
 
@@ -257,7 +257,7 @@ func init() {
 	}
 
 	if err := startMetric(metricPath, metricPort, pprofEnable); err != nil {
-		log.Printf("tmetric: unable to start the metrics HTTP server: %v", err)
+		log.Printf("tmetric: failed to start metrics HTTP server: %v", err)
 	}
 }
 
@@ -290,7 +290,7 @@ func Shutdown(ctx context.Context) error {
 	}
 
 	if err := tmpServer.Shutdown(ctx); err != nil {
-		return fmt.Errorf("tmetric: shutting down the metrics HTTP server: %w", err)
+		return fmt.Errorf("tmetric: failed to shut down metrics HTTP server: %w", err)
 	}
 	return nil
 }
@@ -322,14 +322,14 @@ func startMetric(metricPath string, metricPort int, pprofEnable bool) error {
 	if server != nil {
 		mutex.Unlock()
 
-		return fmt.Errorf("tmetric: the metrics HTTP server is already running")
+		return fmt.Errorf("tmetric: metrics HTTP server is already running")
 	}
 
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", metricPort))
 	if err != nil {
 		mutex.Unlock()
 
-		return fmt.Errorf("tmetric: listen on :%d: %w", metricPort, err)
+		return fmt.Errorf("tmetric: failed to listen on :%d: %w", metricPort, err)
 	}
 
 	tmpServer := &http.Server{
@@ -341,11 +341,11 @@ func startMetric(metricPath string, metricPort int, pprofEnable bool) error {
 	mutex.Unlock()
 
 	go func() {
-		log.Printf("tmetric: serving metrics on %s (path %s, pprof %t)", listener.Addr().String(), metricPath, pprofEnable)
+		log.Printf("tmetric: metrics HTTP server is listening on %s (path=%s, pprof=%t)", listener.Addr().String(), metricPath, pprofEnable)
 
 		err := tmpServer.Serve(listener)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Printf("tmetric: metrics HTTP server error (path %s, port %d, pprof %t): %v", metricPath, metricPort, pprofEnable, err)
+			log.Printf("tmetric: metrics HTTP server terminated unexpectedly (path=%s, port=%d, pprof=%t): %v", metricPath, metricPort, pprofEnable, err)
 		}
 
 		mutex.Lock()

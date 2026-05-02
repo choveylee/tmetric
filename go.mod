@@ -3,14 +3,14 @@ module github.com/choveylee/tmetric
 go 1.25.0
 
 require (
-	github.com/choveylee/tcfg v0.0.0-20260412131155-447616287f12
+	github.com/choveylee/tcfg v0.0.0-20260502053036-a4c795ccc946
 	github.com/prometheus/client_golang v1.23.2
 )
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/choveylee/terror v0.0.0-20260412130656-8315822d7ee8 // indirect
+	github.com/choveylee/terror v0.0.0-20260502021137-6588de2883eb // indirect
 	github.com/klauspost/compress v1.18.5 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect

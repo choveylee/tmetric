@@ -1,6 +1,6 @@
-// Package registry provides registration hooks used by tmetric and optional
-// integration packages. It is intended primarily for subpackages such as
-// github.com/choveylee/tmetric/registry/pprof.
+// Package registry provides shared registration hooks used by tmetric and
+// optional integration packages. It is primarily intended for subpackages such
+// as github.com/choveylee/tmetric/registry/pprof.
 package registry
 
 import (
@@ -19,11 +19,11 @@ var (
 	pprofWaiters []func()
 )
 
-// RegisterPprof registers the function used by tmetric to attach pprof handlers
-// to a metrics HTTP mux. It panics if registrarFunc is nil.
+// RegisterPprof registers the function that tmetric uses to attach pprof
+// handlers to a metrics HTTP mux. It panics if registrarFunc is nil.
 func RegisterPprof(registrarFunc PprofRegistrarFunc) {
 	if registrarFunc == nil {
-		panic("registry: pprof registrar must not be nil")
+		panic("registry: pprof registrar function must not be nil")
 	}
 
 	mutex.Lock()
@@ -41,8 +41,8 @@ func RegisterPprof(registrarFunc PprofRegistrarFunc) {
 	}
 }
 
-// PprofRegistrar returns the currently registered pprof registrar. It returns
-// nil if no registrar has been registered.
+// PprofRegistrar returns the currently registered pprof registrar, or nil if no
+// registrar has been registered.
 func PprofRegistrar() PprofRegistrarFunc {
 	mutex.Lock()
 	defer mutex.Unlock()
@@ -50,7 +50,7 @@ func PprofRegistrar() PprofRegistrarFunc {
 	return pprofRegistrar
 }
 
-// WhenPprofAvailable invokes fn immediately if a pprof registrar is already
+// WhenPprofAvailable invokes fn immediately when a pprof registrar is already
 // available. Otherwise, it arranges for fn to run once pprof support has been
 // registered.
 func WhenPprofAvailable(fn func()) {

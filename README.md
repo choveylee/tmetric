@@ -1,8 +1,9 @@
 # tmetric
 
-`tmetric` provides thin wrappers around Prometheus `CounterVec`, `GaugeVec`, and
-`HistogramVec`. The package validates label-value arity before delegating to
-Prometheus APIs and can expose metrics through an HTTP endpoint.
+`tmetric` provides lightweight wrappers around Prometheus `CounterVec`,
+`GaugeVec`, and `HistogramVec`. The package validates label-value arity before
+delegating to Prometheus APIs and can expose metrics through a dedicated HTTP
+endpoint.
 
 ## Requirements
 
@@ -16,10 +17,11 @@ go get github.com/choveylee/tmetric
 
 ## Features
 
-- Registers counters, gauges, and histograms with the default Prometheus registry.
-- Returns errors for mismatched label-value counts instead of allowing
+- Registers counters, gauges, and histograms with the default Prometheus
+  registry.
+- Returns errors for label-value count mismatches instead of allowing
   `WithLabelValues` to panic.
-- Exposes metrics through an optional HTTP server created by `InitMetric`.
+- Exposes metrics through a dedicated HTTP server started by `InitMetric`.
 - Supports configuration-driven startup through
   [`tcfg`](https://github.com/choveylee/tcfg).
 - Supports optional integration with the standard-library `net/http/pprof`
@@ -32,15 +34,20 @@ package main
 
 import (
 	"context"
+	"log"
 
 	"github.com/choveylee/tmetric"
 )
 
 func main() {
 	if err := tmetric.InitMetric("/metrics", 9090, false); err != nil {
-		panic(err)
+		log.Fatalf("initialize metrics HTTP server: %v", err)
 	}
-	defer func() { _ = tmetric.Shutdown(context.Background()) }()
+	defer func() {
+		if err := tmetric.Shutdown(context.Background()); err != nil {
+			log.Printf("shut down metrics HTTP server: %v", err)
+		}
+	}()
 
 	requestsTotal, err := tmetric.NewCounterVec(
 		"http_requests_total",
@@ -48,10 +55,12 @@ func main() {
 		[]string{"method"},
 	)
 	if err != nil {
-		panic(err)
+		log.Fatalf("create counter: %v", err)
 	}
 
-	_ = requestsTotal.Inc("GET")
+	if err := requestsTotal.Inc("GET"); err != nil {
+		log.Printf("increment counter: %v", err)
+	}
 }
 ```
 
@@ -89,8 +98,8 @@ its handlers on `http.DefaultServeMux`.
 If `InitMetric` is called with `pprofEnable=true` before the optional package is
 imported, `InitMetric` returns an error. During configuration-driven startup,
 package initialization defers metrics server startup until pprof support becomes
-available. If the optional package is never imported, the server is not started
-automatically.
+available. If the optional package is never imported, the metrics HTTP server is
+not started automatically.
 
 ## Histograms
 
