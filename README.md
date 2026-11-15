@@ -7,7 +7,7 @@ endpoint.
 
 ## Requirements
 
-- Go **1.25** or later
+- Go **1.27.4** or later
 
 ## Installation
 
@@ -21,7 +21,14 @@ go get github.com/choveylee/tmetric
   registry.
 - Returns errors for label-value count mismatches instead of allowing
   `WithLabelValues` to panic.
+- Returns errors for invalid UTF-8 label values and uninitialized vectors; histogram
+  label names cannot contain the reserved bucket label `le`.
+- Copies label-name slices during construction and requires counter increments to
+  be finite and non-negative.
 - Exposes metrics through a dedicated HTTP server started by `InitMetric`.
+- Reads existing metrics through `promhttp.HandlerFor` without registering scrape
+  instrumentation during server startup, so handler construction cannot cause
+  internal scrape-metric registration conflicts.
 - Supports configuration-driven startup through
   [`tcfg`](https://github.com/choveylee/tcfg).
 - Supports optional integration with the standard-library `net/http/pprof`
@@ -35,6 +42,7 @@ package main
 import (
 	"context"
 	"log"
+	"time"
 
 	"github.com/choveylee/tmetric"
 )
@@ -44,7 +52,10 @@ func main() {
 		log.Fatalf("initialize metrics HTTP server: %v", err)
 	}
 	defer func() {
-		if err := tmetric.Shutdown(context.Background()); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := tmetric.Shutdown(ctx); err != nil {
 			log.Printf("shut down metrics HTTP server: %v", err)
 		}
 	}()
@@ -108,9 +119,39 @@ not started automatically.
 fractional milliseconds as a `float64`, which is suitable for
 `HistogramVec.Observe`.
 
-## Testing
+## HTTP server lifecycle
+
+Automatic startup and business-vector registration remain unchanged. The HTTP
+handler exposes the configured default gatherer and logs collection errors. It
+does not automatically add `promhttp_metric_handler_requests_total`,
+`promhttp_metric_handler_requests_in_flight`, or an internal handler-error counter.
+Existing metrics with those names remain visible through the gatherer. The
+handler's `Registry` option stays nil to avoid implicit registration.
+
+`InitMetric` accepts a literal URL path, including valid percent escapes, and ports
+from `0` to `65535` (`0` selects an ephemeral port). Malformed escapes, repeated
+slashes, dot segments, and overlaps with `/debug/pprof` when profiling is enabled
+return errors before a listener is opened.
+
+Complete request reads, including headers and bodies, have a **10-second** timeout;
+idle keep-alive connections have a **1-minute** timeout. Long responses such as CPU
+profiles can continue after the request has been read.
+
+`Shutdown` requires a non-nil context. A successful return means the serving
+goroutine has exited and the server can be restarted immediately. If shutdown
+times out while a scrape or profile is active, release or finish that work and
+call `Shutdown` again with a new deadline; a new server is rejected until shutdown
+completes. Underlying shutdown and registration errors retain their error chain.
+
+`Shutdown` also cancels configuration-driven startup waiting for optional pprof
+support. Registering that support later does not revive a canceled startup.
+A successful explicit `InitMetric` supersedes any pending automatic startup, and
+explicit startup remains available after shutdown.
+
+## Validation
 
 ```bash
-go test ./...
+gofmt -l *.go registry/*.go registry/pprof/*.go
+go build ./...
 go vet ./...
 ```

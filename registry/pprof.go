@@ -12,7 +12,7 @@ import (
 type PprofRegistrarFunc func(*http.ServeMux) error
 
 var (
-	mutex sync.Mutex
+	pprofMutex sync.Mutex
 
 	pprofRegistrar PprofRegistrarFunc
 
@@ -26,7 +26,7 @@ func RegisterPprof(registrarFunc PprofRegistrarFunc) {
 		panic("registry: pprof registrar function must not be nil")
 	}
 
-	mutex.Lock()
+	pprofMutex.Lock()
 
 	pprofRegistrar = registrarFunc
 
@@ -34,7 +34,7 @@ func RegisterPprof(registrarFunc PprofRegistrarFunc) {
 
 	pprofWaiters = nil
 
-	mutex.Unlock()
+	pprofMutex.Unlock()
 
 	for _, pendingPprofWaiter := range pendingPprofWaiters {
 		pendingPprofWaiter()
@@ -44,30 +44,30 @@ func RegisterPprof(registrarFunc PprofRegistrarFunc) {
 // PprofRegistrar returns the currently registered pprof registrar, or nil if no
 // registrar has been registered.
 func PprofRegistrar() PprofRegistrarFunc {
-	mutex.Lock()
-	defer mutex.Unlock()
+	pprofMutex.Lock()
+	defer pprofMutex.Unlock()
 
 	return pprofRegistrar
 }
 
-// WhenPprofAvailable invokes fn immediately when a pprof registrar is already
-// available. Otherwise, it arranges for fn to run once pprof support has been
+// WhenPprofAvailable invokes callback immediately when a pprof registrar is already
+// available. Otherwise, it arranges for callback to run once pprof support has been
 // registered.
-func WhenPprofAvailable(fn func()) {
-	if fn == nil {
+func WhenPprofAvailable(callback func()) {
+	if callback == nil {
 		return
 	}
 
-	mutex.Lock()
+	pprofMutex.Lock()
 
 	if pprofRegistrar != nil {
-		mutex.Unlock()
-		fn()
+		pprofMutex.Unlock()
+		callback()
 
 		return
 	}
 
-	pprofWaiters = append(pprofWaiters, fn)
+	pprofWaiters = append(pprofWaiters, callback)
 
-	mutex.Unlock()
+	pprofMutex.Unlock()
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/choveylee/tmetric/registry"
 )
 
+// init makes the standard profiling handlers available to the metrics server.
 func init() {
 	pprofRegistrarFunc := func(mux *http.ServeMux) error {
 		mux.HandleFunc("GET /debug/pprof/", stdpprof.Index)
